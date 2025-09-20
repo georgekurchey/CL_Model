@@ -1,0 +1,27 @@
+project: CL_Model
+data_root: data
+raw_dir: data/raw
+proc_dir: data/proc
+reports_dir: reports
+random_seed: 42
+horizons: [1]
+roll_rule:
+  type: volume_or_deadline
+  deadline_business_days: 5
+sources:
+  eia:
+    enabled: true
+    api_key_env: EIA_API_KEY
+    since: '2015-01-01'
+  fred:
+    enabled: true
+    series: [DTWEXBGS, DGS10, T10YIE]
+    since: '2015-01-01'
+features:
+  include: [ret_1d, curve_pca_k3, usd_index, real_rate_10y]
+targets:
+  - name: ret_1d
+    instrument: CL_M1
+backtest:
+  train_years: 3
+  test_months: 6

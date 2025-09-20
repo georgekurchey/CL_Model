@@ -1,88 +1,52 @@
+from __future__ import annotations
+import argparse
+from pathlib import Path
+import pandas as pd
+import numpy as np
+import yaml
+from .curve_pca import curve_pca_k3
 
-import argparse, json, os, math
+PROC = Path("data/proc"); PROC.mkdir(parents=True, exist_ok=True)
 
-def business_days(start_year=2016, end_year=2024):
-    from datetime import date, timedelta
-    d=date(start_year,1,1); end=date(end_year,12,31)
-    out=[]
-    while d<=end:
-        if d.weekday()<5: out.append(d.isoformat())
-        d += timedelta(days=1)
-    return out
+def _toy_curve() -> pd.DataFrame:
+    dates = pd.date_range("2020-01-01", periods=30, freq="B")
+    data = {f"CL_M{i}": 70 + 0.05*np.arange(len(dates)) + 0.2*i for i in range(1, 13)}
+    df = pd.DataFrame(data, index=dates).reset_index().rename(columns={"index":"date"})
+    return df
 
-def write_csv(path, header, rows):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(",".join(header)+"\n")
-        for r in rows:
-            f.write(",".join(r)+"\n")
+def _fred_block() -> pd.DataFrame:
+    raw = Path("data/raw/fred")
+    out = []
+    for s in ["DTWEXBGS","DGS10","T10YIE"]:
+        f = raw / f"{s}.csv"
+        if f.exists():
+            out.append(pd.read_csv(f, parse_dates=["date"]))
+    if not out:
+        return pd.DataFrame()
+    df = out[0]
+    for k in out[1:]:
+        df = df.merge(k, on="date", how="outer")
+    return df.sort_values("date")
 
-def make_demo(out_path):
-    dates = business_days(2016, 2024)
-    n=len(dates)
-    # simple RNG (LCG + Box-Muller)
-    seed=42
-    def randu():
-        nonlocal seed
-        seed = (1664525*seed + 1013904223) % (2**32)
-        return (seed+1)/(2**32)
-    def randn():
-        u1=max(randu(),1e-12); u2=randu()
-        return ( -2.0*math.log(u1) )**0.5 * math.cos(2*math.pi*u2)
+def build_features(config_path: str = "config/pipeline.yaml") -> Path:
+    _ = yaml.safe_load(Path(config_path).read_text())
+    curve = _toy_curve()
+    fred = _fred_block()
+    df = curve.merge(fred, on="date", how="left")
+    df["ret_1d"] = np.log(df["CL_M1"]).diff().fillna(0.0)
+    pca = curve_pca_k3(df.filter(like="CL_M").set_index(df["date"]))
+    pca = pca.reset_index().rename(columns={"index": "date"})
+    out = df.merge(pca, on="date", how="left").sort_values("date").reset_index(drop=True)
+    out_file = PROC / "features.parquet"
+    out.to_parquet(out_file, index=False)
+    return out_file
 
-    cl = [[0.0]*n for _ in range(13)]  # 1..12
-    usd=[0.0]*n; ust10=[0.0]*n; bei10=[0.0]*n; cvol=[0.0]*n
-    eia=[0]*n; inv=[0.0]*n; ret=[0.0]*n
-    for i in range(n):
-        t=i/252.0
-        base=55.0 + 15.0*math.sin(2*math.pi*t/1.0) + 0.8*randn()
-        for k in range(1,13):
-            cl[k][i] = base + (k-1)*0.05
-        usd[i]  = (usd[i-1] if i>0 else 0.0) + 0.02*randn()
-        ust10[i]= 2.0 + 0.5*math.sin(2*math.pi*t/1.5) + 0.05*randn()
-        bei10[i]= 2.2 + 0.1*math.sin(2*math.pi*t/1.8) + 0.03*randn()
-        cvol[i] = 35.0 + 5.0*math.sin(2*math.pi*t/1.1) + 1.2*randn()
-        # Wednesday indicator
-        y,m,d = [int(p) for p in dates[i].split("-")]
-        import datetime as _dt
-        eia[i] = 1 if _dt.date(y,m,d).weekday()==2 else 0
-        inv[i] = 0.4*randn()*eia[i]
+def main(config: str) -> None:
+    out = build_features(config)
+    print(str(out))
 
-    for i in range(n):
-        slope_lag = (cl[1][i-1]-cl[2][i-1]) if i>0 else 0.0
-        usd_lag = usd[i-1] if i>0 else 0.0
-        iv = inv[i]
-        vol = 0.02 + (0.004*(cvol[i-1]-35.0) if i>0 else 0.0)
-        vol = max(0.01, min(0.2, vol))
-        mean = -0.02*slope_lag - 0.005*usd_lag + 0.015*iv
-        ret[i] = mean + vol*randn()
-
-    # rebuild M1 price
-    price=55.0
-    for i in range(n):
-        price *= math.exp(ret[i])
-        cl[1][i]=price
-        for k in range(2,13):
-            cl[k][i]=cl[1][i]+(k-1)*0.05
-    spread=[cl[1][i]-cl[2][i] for i in range(n)]
-
-    header=["date"]+[f"cl_settle_m{k}" for k in range(1,13)]+["usd_broad_index","ust_10y","breakeven_10y","wti_cvol_1m","eia_day_dummy","inv_surprise","spread_m1_m2","ret_1d"]
-    rows=[]
-    for i in range(n):
-        row=[dates[i]]+[f"{cl[k][i]:.6f}" for k in range(1,13)]+[f"{usd[i]:.6f}",f"{ust10[i]:.6f}",f"{bei10[i]:.6f}",f"{cvol[i]:.6f}",f"{eia[i]}",
-             f"{inv[i]:.6f}",f"{spread[i]:.6f}",f"{ret[i]:.8f}"]
-        rows.append(row)
-    write_csv(out_path, header, rows)
-
-if __name__=="__main__":
+if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", required=True)
-    ap.add_argument("--demo", action="store_true")
+    ap.add_argument("--config", default="config/pipeline.yaml")
     args = ap.parse_args()
-    cfg = json.load(open(args.config, "r", encoding="utf-8"))
-    out_path = os.path.join(cfg["paths"]["proc"], "features.csv")
-    if args.demo:
-        make_demo(out_path)
-        print("Demo features ->", out_path)
-    else:
-        raise SystemExit("Real-data build not implemented in this minimal Python 3 demo. Use --demo.")
+    main(args.config)
