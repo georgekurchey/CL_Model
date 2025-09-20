@@ -1,0 +1,8 @@
+{
+  "returns": {
+    "ret_1d": {
+      "formula": "log(cl_settle_m1/lag1(cl_settle_m1))",
+      "horizon": "1d"
+    }
+  }
+}

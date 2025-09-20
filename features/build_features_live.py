@@ -1,0 +1,249 @@
+import argparse, json, math
+from pathlib import Path
+import numpy as np
+import pandas as pd
+
+ROOT = Path("/Users/georgekurchey/CL_Model")
+DEF_RAW = ROOT / "data" / "raw" / "cl_strip.parquet"
+DEF_OUT = ROOT / "data" / "proc" / "features.csv"
+DEF_MACRO = ROOT / "data" / "raw" / "macro.parquet"
+DEF_VOL = ROOT / "data" / "raw" / "vol.parquet"
+DEF_EIA = ROOT / "data" / "raw" / "eia.parquet"
+DEF_CFG = ROOT / "config" / "pipeline.json"
+
+def load_any(p: Path) -> pd.DataFrame:
+    if p.suffix == ".parquet" and p.exists():
+        try:
+            import pyarrow  # noqa
+            return pd.read_parquet(p)
+        except Exception:
+            pass
+    # try csv fallback
+    pcsv = p.with_suffix(".csv")
+    if pcsv.exists():
+        return pd.read_csv(pcsv, parse_dates=["date"])
+    # try parquet fallback
+    pparq = p.with_suffix(".parquet")
+    if pparq.exists():
+        import pyarrow  # noqa
+        return pd.read_parquet(pparq)
+    raise FileNotFoundError(f"Not found: {p} (also tried {pcsv} / {pparq})")
+
+def to_tznaive(df: pd.DataFrame, col: str="date"):
+    df[col] = pd.to_datetime(df[col], errors="coerce")
+    df[col] = df[col].dt.tz_localize(None)
+    return df
+
+def ewma_vol(returns: pd.Series, lam: float=0.94) -> pd.Series:
+    # daily EWMA stdev
+    var = []
+    v = np.nan
+    for r in returns.fillna(0.0).values:
+        if math.isnan(v):
+            v = (1-lam) * (r*r)
+        else:
+            v = lam*v + (1-lam)*(r*r)
+        var.append(v)
+    sig = np.sqrt(np.array(var))
+    out = pd.Series(sig, index=returns.index, name="ewma_vol")
+    return out
+
+def main():
+    ap = argparse.ArgumentParser(description="Build model features from CL strip (+optional macro/EIA/vol).")
+    ap.add_argument("--config", default=str(DEF_CFG), help="pipeline.json (optional)")
+    ap.add_argument("--raw_strip", default=str(DEF_RAW), help="cl_strip.[parquet|csv]")
+    ap.add_argument("--macro", default=str(DEF_MACRO), help="macro parquet (optional)")
+    ap.add_argument("--vol", default=str(DEF_VOL), help="vol parquet (optional)")
+    ap.add_argument("--eia", default=str(DEF_EIA), help="eia parquet (optional)")
+    ap.add_argument("--out", default=str(DEF_OUT), help="features.csv output")
+    ap.add_argument("--append", action="store_true", help="append new rows if file exists")
+    ap.add_argument("--ffill_strip_days", type=int, default=1, help="forward-fill window for occasional strip gaps")
+    ap.add_argument("--ewma_lambda", type=float, default=0.94, help="EWMA lambda for realized vol")
+    ap.add_argument("--ewma_window", type=int, default=20, help="rolling window sanity check (not used in EWMA)")
+    args = ap.parse_args()
+
+    # Optional config load (robust)
+    ff_macro = 1
+    cfg = {}
+    cfg_path = Path(args.config)
+    if cfg_path.exists():
+        try:
+            raw = cfg_path.read_text()
+            cfg = json.loads(raw)
+            if not isinstance(cfg, dict):
+                print(f"Warning: {cfg_path} is not a JSON object; ignoring.")
+                cfg = {}
+            else:
+                fsec = cfg.get("features", {})
+                if isinstance(fsec, dict):
+                    args.ewma_lambda = float(fsec.get("realized_vol_lambda", args.ewma_lambda))
+                    ff_macro = int(fsec.get("forward_fill_days_macro", ff_macro))
+        except Exception as e:
+            print(f"Warning: could not parse {cfg_path}: {e}; using defaults.")
+
+    # ---------- Load & pivot strip ----------
+    strip = load_any(Path(args.raw_strip))
+    strip = to_tznaive(strip, "date")
+    # Expect columns: date, ticker (CL1..CL12), settle
+    need = {"date","ticker","settle"}
+    if not need.issubset(set(c.lower() for c in strip.columns)):
+        # normalize column names if they came in title case
+        strip.columns = [c.lower() for c in strip.columns]
+    assert need.issubset(strip.columns), f"strip missing columns {need - set(strip.columns)}"
+
+    # keep only positive settles; drop duplicates
+    strip = strip.dropna(subset=["date","settle"])
+    strip = strip[strip["settle"] > 0]
+    strip = strip.sort_values(["date","ticker"]).drop_duplicates(["date","ticker"], keep="last")
+
+    # pivot to wide CL1..CL12
+    wide = strip.pivot(index="date", columns="ticker", values="settle").sort_index()
+    # ensure M1..M12 columns (may be missing some due to Yahoo gaps)
+    for i in range(1, 13):
+        col = f"CL{i}"
+        if col not in wide.columns:
+            wide[col] = np.nan
+    wide = wide[[f"CL{i}" for i in range(1,13)]]
+
+    # occasional short gaps → forward-fill limited days
+    wide = wide.ffill(limit=args.ffill_strip_days)
+
+    # rename to cl_settle_m#
+    feat = wide.rename(columns={f"CL{i}": f"cl_settle_m{i}" for i in range(1,13)}).reset_index()
+
+    # ---------- Core curve features ----------
+    def diff(a,b): return feat[a] - feat[b]
+    feat["spread_m1_m2"]  = diff("cl_settle_m1","cl_settle_m2")
+    feat["spread_m1_m3"]  = diff("cl_settle_m1","cl_settle_m3")
+    feat["spread_m1_m6"]  = diff("cl_settle_m1","cl_settle_m6")
+    feat["spread_m1_m12"] = diff("cl_settle_m1","cl_settle_m12")
+    feat["slope_1_12"]    = diff("cl_settle_m1","cl_settle_m12")
+    feat["avg_short"]     = feat[[f"cl_settle_m{i}" for i in (1,2,3)]].mean(axis=1)
+    feat["avg_long"]      = feat[[f"cl_settle_m{i}" for i in (10,11,12)]].mean(axis=1)
+    feat["slope_short_long"] = feat["avg_short"] - feat["avg_long"]
+    feat["curvature_1_3_v_2"] = (feat["cl_settle_m1"] + feat["cl_settle_m3"])/2.0 - feat["cl_settle_m2"]
+
+    # ---------- Returns & realized vol ----------
+    feat = feat.sort_values("date")
+    m1 = feat["cl_settle_m1"]
+    r1 = np.log(m1 / m1.shift(1))
+    feat["ret_1d_realized"] = r1
+    # target = next day's log return
+    feat["ret_1d"] = r1.shift(-1)
+
+    # EWMA realized vol from M1 returns
+    feat["rv_ewma20"] = ewma_vol(r1, lam=args.ewma_lambda)
+
+    # additional simple momentum
+    feat["ret_5d_sum"] = r1.rolling(5).sum()
+    feat["ret_20d_sum"] = r1.rolling(20).sum()
+
+    # ---------- Optional macro join ----------
+    def maybe_join_macro(feat: pd.DataFrame) -> pd.DataFrame:
+        p = Path(args.macro)
+        if not p.exists() and not p.with_suffix(".csv").exists() and not p.with_suffix(".parquet").exists():
+            print("Macro file not found; continuing without macro.")
+            return feat
+        mac = load_any(p)
+        # Expect schema: date, series_id, value  OR date, <named columns>
+        mac = to_tznaive(mac, "date")
+        mac.columns = [c.lower() for c in mac.columns]
+        if {"series_id","value"}.issubset(mac.columns):
+            mac = mac.pivot(index="date", columns="series_id", values="value").reset_index()
+            # rename common FRED ids to friendly names if present
+            rename_map = {
+                "dtwexbgs":"usd_broad_index",
+                "dgs10":"ust_10y",
+                "t10yie":"breakeven_10y"
+            }
+            mac = mac.rename(columns=rename_map)
+        # 1-day forward fill to align to trading calendar
+        mac = mac.sort_values("date").ffill(limit=ff_macro)
+        out = pd.merge_asof(feat.sort_values("date"), mac.sort_values("date"), on="date")
+        return out
+
+    feat = maybe_join_macro(feat)
+
+    # ---------- Optional vol join (override EWMA if provided) ----------
+    def maybe_join_vol(feat: pd.DataFrame) -> pd.DataFrame:
+        p = Path(args.vol)
+        if not p.exists() and not p.with_suffix(".csv").exists() and not p.with_suffix(".parquet").exists():
+            return feat
+        vv = load_any(p)
+        vv = to_tznaive(vv, "date").sort_values("date")
+        # Try common column names
+        cols = {c.lower(): c for c in vv.columns}
+        cand = None
+        for k in ("wti_cvol_1m","ovx","ovx_close","ovx_index","cvol"):
+            if k in cols:
+                cand = cols[k]; break
+        if cand is not None:
+            vv2 = vv[["date", cand]].rename(columns={cand: "ovx_close"})
+            feat2 = pd.merge_asof(feat.sort_values("date"), vv2.sort_values("date"), on="date")
+            # keep both: rv_ewma20 (from returns) and ovx_close if present
+            return feat2
+        return feat
+
+    feat = maybe_join_vol(feat)
+
+    # ---------- Optional EIA join ----------
+    def maybe_join_eia(feat: pd.DataFrame) -> pd.DataFrame:
+        p = Path(args.eia)
+        if not p.exists() and not p.with_suffix(".csv").exists() and not p.with_suffix(".parquet").exists():
+            feat["eia_day_dummy"] = 0
+            return feat
+        ww = load_any(p)
+        ww = to_tznaive(ww, "date").sort_values("date")
+        # expect: date, series_id, level
+        ww.columns = [c.lower() for c in ww.columns]
+        if {"series_id","level"}.issubset(ww.columns):
+            pivot = ww.pivot(index="date", columns="series_id", values="level").reset_index()
+        else:
+            pivot = ww
+        # simple: mark Wednesdays of weeks observed in EIA file
+        feat["weekday"] = feat["date"].dt.weekday  # Mon=0
+        feat["eia_day_dummy"] = (feat["weekday"] == 2).astype(int)
+        feat = feat.drop(columns=["weekday"])
+        # left join levels if present
+        feat = pd.merge_asof(feat.sort_values("date"), pivot.sort_values("date"), on="date")
+        return feat
+
+    feat = maybe_join_eia(feat)
+
+    # ---------- Final tidy ----------
+    # drop very early rows where features are NaN
+    base_cols = ["cl_settle_m1","ret_1d"]
+    feat = feat.dropna(subset=[c for c in base_cols if c in feat.columns]).copy()
+    feat = feat.sort_values("date").reset_index(drop=True)
+
+    # Save/append
+    outp = Path(args.out)
+    outp.parent.mkdir(parents=True, exist_ok=True)
+    if args.append and outp.exists():
+        old = pd.read_csv(outp, parse_dates=["date"])
+        old["date"] = pd.to_datetime(old["date"]).dt.tz_localize(None)
+        combo = pd.concat([old, feat], axis=0, ignore_index=True)
+        combo = combo.sort_values("date").drop_duplicates("date", keep="last")
+        combo.to_csv(outp, index=False)
+        print(f"Appended features -> {outp} (rows={len(combo):,})")
+    else:
+
+# ---- Roll features integration ----
+try:
+    from features.roll_utils import merge_roll_features
+    _strip_path = "/Users/georgekurchey/CL_Model/data/raw/cl_strip.parquet"
+    df = merge_roll_features(df, _strip_path, eps=0.01)
+    print("Roll features merged: ret_1d_splice, roll_flag, days_since_roll, px_cm1")
+except Exception as _e:
+    print(f"Roll features skipped: {_e}")
+# -----------------------------------
+        feat.to_csv(outp, index=False)
+        print(f"Wrote features -> {outp} (rows={len(feat):,})")
+
+    # quick summary
+    last = feat["date"].max()
+    cols = [c for c in feat.columns if c != "date"]
+    print(f"Latest date: {last.date()}  columns={len(cols)}")
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="/Users/georgekurchey/CL_Model"
+LOGDIR="$ROOT/logs"
+mkdir -p "$LOGDIR" "$ROOT/reports" "$ROOT/preds"
+TS=$(date +"%Y%m%d_%H%M%S")
+LOG="$LOGDIR/step4_${TS}.log"
+PROG="$LOGDIR/progress.json"
+ln -sf "$LOG" "$LOGDIR/current.log"
+
+progress () {
+  # $1 stage, $2 pct
+  printf '{"stage":"%s","pct":%s,"ts":"%s"}\n' "$1" "$2" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "$PROG"
+  echo "[$(date +"%F %T")] $1 ($2%)" | tee -a "$LOG"
+}
+
+err_trap () {
+  progress "FAILED" 0
+  echo "[ERROR] Step 4 failed. See log: $LOG"
+}
+trap err_trap ERR
+
+# optional: load API keys
+if [ -f "$ROOT/config/secrets.env" ]; then . "$ROOT/config/secrets.env"; fi
+
+PY="$(command -v python3)"
+
+progress "Start Step 4" 1
+
+progress "Update CL strip (Yahoo)" 10
+"$PY" "$ROOT/ingest/ndlink_cl.py" --source yahoo --m 12 --out "$ROOT/data/raw/cl_strip.parquet" --sleep 0.0 >> "$LOG" 2>&1
+
+progress "Update Macro (FRED)" 20
+"$PY" "$ROOT/ingest/fred_macro.py" --series DTWEXBGS DGS10 T10YIE DFII10 --out "$ROOT/data/raw/macro.parquet" >> "$LOG" 2>&1
+
+progress "Update EIA weekly" 30
+"$PY" "$ROOT/ingest/eia_weekly.py" --series WCESTUS1 WGTSTUS1 WDISTUS1 --out "$ROOT/data/raw/eia.parquet" >> "$LOG" 2>&1
+
+progress "Rebuild features" 50
+"$PY" "$ROOT/features/build_features_live.py" \
+  --config "$ROOT/config/pipeline.json" \
+  --raw_strip "$ROOT/data/raw/cl_strip.parquet" \
+  --macro "$ROOT/data/raw/macro.parquet" \
+  --vol "$ROOT/data/raw/vol.parquet" \
+  --eia "$ROOT/data/raw/eia.parquet" \
+  --out "$ROOT/data/proc/features.csv" >> "$LOG" 2>&1
+
+progress "Validate features" 60
+"$PY" "/Users/georgekurchey/CL_Model/qa/validate_features.py" --manifest "/Users/georgekurchey/CL_Model/config/features_manifest.json" --features "/Users/georgekurchey/CL_Model/data/proc/features.csv" >> "$LOG" 2>&1
+progress "Validate features" 60
+python3 "/Users/georgekurchey/CL_Model/scripts/validate_features.py" >> "$LOG" 2>&1
+progress "Train/refresh model if stale" 65
+"$PY" "$ROOT/models/save_full_iso.py" --features "$ROOT/data/proc/features.csv" --refresh_days 30 >> "$LOG" 2>&1
+
+progress "Predict today" 80
+"$PY" "$ROOT/serve/predict_today.py" >> "$LOG" 2>&1
+
+progress "Health probe" 98
+"$PY" "/Users/georgekurchey/CL_Model/monitor/health.py" >> "$LOG" 2>&1
+progress "Update live monitor" 90
+"$PY" "$ROOT/monitor/scoring_live.py" >> "$LOG" 2>&1
+
+progress "DONE" 100
+echo "Done. Logs: $LOG ; Monitor: $ROOT/reports/monitor.html"
+
+# Step 6: signals + paper-trade
+progress "Generate signal" 92
+"$PY" "/Users/georgekurchey/CL_Model/signals/generate_signal.py" --config "/Users/georgekurchey/CL_Model/config/signal.json" >> "$LOG" 2>&1
+
+progress "Update signal dashboard" 95
+"$PY" "/Users/georgekurchey/CL_Model/backtests/paper_trade.py" --config "/Users/georgekurchey/CL_Model/config/signal.json" --out_html "/Users/georgekurchey/CL_Model/reports/signal_dashboard.html" >> "$LOG" 2>&1

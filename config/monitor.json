@@ -1,0 +1,9 @@
+{
+  "windows": { "short": 30, "medium": 90, "long": 180 },
+  "var_target": 0.05,
+  "var_z": 1.96,
+  "crps_pct_worsen": 0.20,
+  "psi_warn": 0.10,
+  "psi_alert": 0.25,
+  "freshness_days": { "features": 2, "cl_strip": 2, "macro": 3, "eia": 10 }
+}

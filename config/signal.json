@@ -1,0 +1,8 @@
+{
+  "lookback_vol_days": 60,
+  "target_vol_daily": 0.01,
+  "scale_k": 0.75,
+  "leverage_cap": 2.0,
+  "cost_per_turnover": 0.0002,
+  "use_grid_for_scale": true
+}

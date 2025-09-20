@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual envs
+.venv/
+venv/
+
+# Secrets
+.env
+.env.*
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
+
+# Data (keep samples instead of full datasets)
+data/
+*.csv
+*.parquet
+*.sqlite
+
+# Logs
+logs/
+*.log
+*.err
+
+logs/
+*.log
+*.err
+_backup_*/
+.env
+.env.*
+.venv/
+venv/

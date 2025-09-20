@@ -1,0 +1,21 @@
+{
+  "symbol": "CL",
+  "contract": {
+    "multiplier": 1000,
+    "tick": 0.01
+  },
+  "capital_usd": 1000000,
+  "max_gross_leverage": 3.0,
+  "max_position_contracts": 20,
+  "participation_cap": 0.1,
+  "commission_per_contract": 2.5,
+  "vol_lookback_days": 60,
+  "slip_bps_per_ann_vol": 15.0,
+  "price_fallback_start": 80.0,
+  "price_columns_try": [
+    "px_front",
+    "px_settle",
+    "close",
+    "settle"
+  ]
+}

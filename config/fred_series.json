@@ -1,0 +1,11 @@
+{
+  "start": "2015-01-01",
+  "series": {
+    "DCOILWTICO": "fred_wti_spot",
+    "DCOILBRENTEU": "fred_brent_spot",
+    "DTWEXBGS": "fred_dxy_broad",
+    "FEDFUNDS": "fred_fedfunds",
+    "T10YIE": "fred_breakeven_10y",
+    "T10Y2Y": "fred_term_10y2y"
+  }
+}

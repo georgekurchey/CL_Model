@@ -1,0 +1,10 @@
+{
+  "asof": "2025-09-10 12:20:12.671365+00:00",
+  "fired": [
+    "PSI_ALERT"
+  ],
+  "messages": [
+    "High feature drift (PSI>=0.25): spread_m1_m2:12.37, cl_settle_m11:12.36, cl_settle_m12:12.36, avg_long:12.36, curvature_1_3_v_2:11.56, cl_settle_m7:10.74, cl_settle_m9:10.74, cl_settle_m8:10.68, cl_settle_m10:10.60, cl_settle_m6:10.60"
+  ],
+  "source_metrics": "/Users/georgekurchey/CL_Model/reports/monitor_metrics.json"
+}

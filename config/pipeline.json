@@ -1,0 +1,18 @@
+{
+  "paths": {
+    "root": "/Users/georgekurchey/CL_Model",
+    "raw": "data/raw",
+    "proc": "data/proc",
+    "preds": "preds",
+    "reports": "reports",
+    "logs": "logs"
+  },
+  "features": {
+    "realized_vol_lambda": 0.94,
+    "forward_fill_days_macro": 1
+  },
+  "walkforward": {
+    "train_years": 3,
+    "test_months": 6
+  }
+}

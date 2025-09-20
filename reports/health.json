@@ -1,0 +1,36 @@
+{
+  "asof": "2025-09-12T03:24:05.333524+00:00",
+  "python": {
+    "executable": "/usr/local/bin/python3",
+    "version": "3.13.7",
+    "platform": "macOS-15.6.1-x86_64-i386-64bit-Mach-O"
+  },
+  "disk": {
+    "free_gb": 17.92,
+    "total_gb": 250.69
+  },
+  "net": {
+    "ok": true,
+    "ms": 288,
+    "endpoint": "https://www.google.com/generate_204",
+    "err": null
+  },
+  "features_csv": {
+    "exists": true,
+    "rows": 1922,
+    "mb": 0.998,
+    "mtime": "2025-09-10T21:00:45.487172842",
+    "latest_date": "2025-09-09T00:00:00"
+  },
+  "live_today": {
+    "exists": true,
+    "rows": 1,
+    "mb": 0.0,
+    "mtime": "2025-09-10T21:02:14.324021578",
+    "latest_date": "2025-09-09T00:00:00"
+  },
+  "monitor_metrics": {
+    "exists": true,
+    "mb": 0.002
+  }
+}

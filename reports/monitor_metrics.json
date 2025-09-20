@@ -1,0 +1,83 @@
+{
+  "asof": "2025-09-10 12:20:12.671365+00:00",
+  "counts": {
+    "n_realized": 1,
+    "notes": null
+  },
+  "coverage_total": {
+    "n": 1,
+    "var5": {
+      "k": 0,
+      "p": 0.0,
+      "lo": 0.0,
+      "hi": 0.7934567085261071
+    },
+    "var95": {
+      "k": 0,
+      "p": 0.0,
+      "lo": 0.0,
+      "hi": 0.7934567085261071
+    }
+  },
+  "coverage_roll": {
+    "short": null,
+    "medium": null,
+    "long": null
+  },
+  "crps": {
+    "short_mean": NaN,
+    "baseline_mean": NaN,
+    "pct_change": NaN
+  },
+  "psi": {
+    "cl_settle_m1": 9.407060816166785,
+    "cl_settle_m2": 8.055178997267152,
+    "cl_settle_m3": 9.142989660906132,
+    "cl_settle_m4": 10.560387278205338,
+    "cl_settle_m5": 10.560546052320506,
+    "cl_settle_m6": 10.596132784109969,
+    "cl_settle_m7": 10.741146629543227,
+    "cl_settle_m8": 10.678425670630793,
+    "cl_settle_m9": 10.735821205084328,
+    "cl_settle_m10": 10.603134238556025,
+    "cl_settle_m11": 12.359505210577636,
+    "cl_settle_m12": 12.358869604533746,
+    "spread_m1_m2": 12.373524369837146,
+    "spread_m1_m3": 9.383213308270564,
+    "spread_m1_m6": 3.7410353348760017,
+    "spread_m1_m12": 4.107031293029179,
+    "slope_1_12": 4.107031293029179,
+    "avg_short": 9.252564862279147,
+    "avg_long": 12.358869604533746,
+    "slope_short_long": 4.5370079541453405,
+    "curvature_1_3_v_2": 11.55820398410572,
+    "ret_1d_realized": 2.5997670015618968,
+    "rv_ewma20": 10.531501318453051,
+    "ret_5d_sum": 0.2910545956404447,
+    "ret_20d_sum": 2.522197979171869,
+    "dfii10": 5.570609552400671,
+    "ust_10y": 5.201117610625049,
+    "usd_broad_index": 6.72407457113629,
+    "breakeven_10y": 9.976852505189262,
+    "eia_day_dummy": NaN,
+    "wcestus1": 7.720835475349755,
+    "wdistus1": 10.563784244546266,
+    "wgtstus1": 7.617668352904608
+  },
+  "latest_dates": {
+    "features": "2025-09-09",
+    "live_pred": "2025-09-09",
+    "cl_strip": "2025-09-10",
+    "macro": "2025-09-09",
+    "eia": "2025-08-29"
+  },
+  "manifest": {
+    "status": "CRITICAL",
+    "critical": 0,
+    "warn": 0,
+    "missing_cols": [],
+    "drift_alerts": 2,
+    "drift_warns": 1,
+    "asof": "2025-09-12T04:07:51.699660+00:00"
+  }
+}

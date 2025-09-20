@@ -1,0 +1,9 @@
+{
+  "use_conformal": true,
+  "targets": [
+    0.05,
+    0.95
+  ],
+  "tail_only": true,
+  "iso_days": 252
+}
