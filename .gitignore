@@ -40,3 +40,13 @@ _backup_*/
 .env.*
 .venv/
 venv/
+
+# Local clutter
+logs/
+*.log
+*.err
+_backup_*/
+.env
+.env.*
+.venv/
+venv/
