@@ -1,161 +1,72 @@
-import math, re
-from pathlib import Path
-from typing import List
+from __future__ import annotations
 import numpy as np
 import pandas as pd
+from typing import Iterable, List
 
-_MONTH_CODE = {"F":1,"G":2,"H":3,"J":4,"K":5,"M":6,"N":7,"Q":8,"U":9,"V":10,"X":11,"Z":12}
+def _numcols(df: pd.DataFrame) -> List[str]:
+    return list(df.select_dtypes(include=[np.number]).columns)
 
-def _find_col(cands: List[str], cols_lower_map):
-    for name in cands:
-        ln = name.lower()
-        if ln in cols_lower_map:
-            return cols_lower_map[ln]
-    return None
-
-def _load_strip(path: Path) -> pd.DataFrame:
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"strip file not found: {p}")
-    if p.suffix.lower() in {".parquet",".pq"}:
-        df = pd.read_parquet(p)
+def detect_roll_flags(dfw: pd.DataFrame, eps: float = 0.005) -> pd.Series:
+    cols = _numcols(dfw)
+    if len(cols) >= 2:
+        a, b = cols[:2]
+    elif len(cols) == 1:
+        a = b = cols[0]
     else:
-        df = pd.read_csv(p)
-    cols = {c.lower(): c for c in df.columns}
-    dcol = _find_col(["date","timestamp","datetime"], cols)
-    if dcol is None:
-        raise ValueError("strip file must contain a date/timestamp column")
-    df = df.rename(columns={dcol: "date"})
-    df["date"] = pd.to_datetime(df["date"])
-    return df.sort_values("date").reset_index(drop=True)
-
-def _m_idx_from_ticker(s: str):
-    # e.g., 'CL3' -> 3
-    m = re.search(r"CL(\d+)$", str(s))
-    if not m:
-        return None
-    try:
-        k = int(m.group(1))
-        return k if k >= 1 else None
-    except Exception:
-        return None
-
-def _m_idx_from_source_code(date_val: pd.Timestamp, s: str):
-    # e.g., 'YF/CLZ25.NYM' -> CLZ25 -> contract month/year -> months diff to date
-    m = re.search(r"CL([FGHJKMNQUVXZ])(\d{2})", str(s))
-    if not m:
-        return None
-    code = m.group(1)
-    yy = int(m.group(2))
-    mm = _MONTH_CODE.get(code)
-    if mm is None:
-        return None
-    year = 2000 + yy if yy < 80 else 1900 + yy
-    d = pd.to_datetime(date_val)
-    cm = d.year*12 + d.month
-    em = year*12 + mm
-    k = em - cm + 1
-    return int(k) if k >= 1 else None
-
-def _to_wide(df: pd.DataFrame) -> pd.DataFrame:
-    # Quick path: already wide
-    if any(str(c).lower()=="m1" or str(c).lower().startswith("m1") for c in df.columns):
-        return df.copy()
-
-    cols_map = {c.lower(): c for c in df.columns}
-    price_col = _find_col(["settle","close","adj_close","adj close","price","last","px","value"], cols_map)
-    if price_col is None:
-        raise ValueError("could not find a price column; expected one of settle/close/adj_close/price/last")
-
-    # try explicit month index columns
-    m_idx_col = _find_col(["m_idx","m","month_idx","contract_month","rank","k","n"], cols_map)
-
-    df2 = df.copy()
-
-    if m_idx_col is None:
-        # try ticker like 'CL3'
-        tick_col = _find_col(["ticker","symbol","contract"], cols_map)
-        if tick_col is not None:
-            ks = df2[tick_col].map(_m_idx_from_ticker)
-        else:
-            ks = pd.Series([None]*len(df2))
-        # fallback: source_code like 'YF/CLZ25.NYM'
-        if ks.isna().all():
-            src_col = _find_col(["source_code","ric","root"], cols_map)
-            if src_col is None:
-                raise ValueError("need m_idx/ticker/source_code to derive month rank")
-            ks = df2.apply(lambda r: _m_idx_from_source_code(r["date"], r[src_col]), axis=1)
-        df2["_m_idx"] = pd.to_numeric(ks, errors="coerce").astype("Int64")
-    else:
-        df2["_m_idx"] = pd.to_numeric(df2[m_idx_col], errors="coerce").round().astype("Int64")
-
-    # keep plausible 1..36
-    df2 = df2[(df2["_m_idx"].notna()) & (df2["_m_idx"]>=1) & (df2["_m_idx"]<=36)].copy()
-
-    piv = df2.pivot_table(index="date", columns="_m_idx", values=price_col, aggfunc="last")
-    piv = piv.rename(columns=lambda x: f"m{int(x)}")
-    piv = piv.sort_index().reset_index()
-    if "m1" not in piv.columns or "m2" not in piv.columns:
-        miss = [c for c in ("m1","m2") if c not in piv.columns]
-        raise ValueError(f"needed columns missing after pivot: {miss}. Check ticker/source_code parsing.")
-    return piv
-
-def detect_roll_flags(df_wide: pd.DataFrame, eps: float=0.01) -> pd.Series:
-    if "m1" not in df_wide.columns or "m2" not in df_wide.columns:
-        raise ValueError("need columns m1 and m2 in wide strip to detect roll")
-    m1 = df_wide["m1"].astype(float).values
-    m2_prev = np.r_[np.nan, df_wide["m2"].astype(float).values[:-1]]
+        return pd.Series(False, index=dfw.index, name="roll_flag")
     with np.errstate(divide="ignore", invalid="ignore"):
-        rel = np.abs(m1 - m2_prev) / np.where(np.abs(m1)>0, np.abs(m1), np.nan)
-    flag = (rel < eps)
-    if flag.size: flag[0] = False
-    miss = np.isnan(m1) | np.isnan(m2_prev)
-    return pd.Series(flag & (~miss), index=df_wide.index, name="roll_flag")
+        ratio = (dfw[b].astype(float) / dfw[a].astype(float)).replace([np.inf, -np.inf], np.nan)
+    run = (ratio > (1.0 + eps)).fillna(False)
+    rising = run & ~run.shift(1, fill_value=False)
+    rf = rising.shift(2, fill_value=False)
+    rf.name = "roll_flag"
+    return rf
 
-def compute_spliced_returns(df_wide: pd.DataFrame, roll_flag: pd.Series) -> pd.Series:
-    m1 = df_wide["m1"].astype(float).values
-    m1_prev = np.r_[np.nan, m1[:-1]]
-    m2_prev = np.r_[np.nan, df_wide["m2"].astype(float).values[:-1]]
-    r = np.where(roll_flag.values, m1 / m2_prev - 1.0, m1 / m1_prev - 1.0)
-    r[0] = np.nan
-    return pd.Series(r, index=df_wide.index, name="ret_1d_splice")
+def compute_spliced_returns(dfw: pd.DataFrame, rf: pd.Series) -> pd.Series:
+    cols = _numcols(dfw)
+    if cols:
+        base = dfw[cols[0]].astype(float)
+        rs = base.pct_change().fillna(0.0)
+    else:
+        rs = pd.Series(0.0, index=dfw.index)
+    mask = rf.reindex(rs.index).fillna(False).astype(bool)
+    rs = rs.copy()
+    rs.loc[mask] = 0.0
+    rs.name = "spliced_return"
+    return rs
 
-def synth_constant_m1(df_wide: pd.DataFrame, ret_splice: pd.Series) -> pd.Series:
-    idxs = np.where(~np.isnan(df_wide["m1"].astype(float).values))[0]
-    if len(idxs)==0:
-        return pd.Series(np.full(len(df_wide), np.nan), index=df_wide.index, name="px_cm1")
-    base_idx = int(idxs[0])
-    base = float(df_wide["m1"].iloc[base_idx])
-    px = np.full(len(df_wide), np.nan, float)
-    px[base_idx] = base
-    for i in range(base_idx+1, len(df_wide)):
-        prev = px[i-1]; rr = ret_splice.iloc[i]
-        px[i] = np.nan if (math.isnan(prev) or math.isnan(rr)) else prev*(1.0+rr)
-    return pd.Series(px, index=df_wide.index, name="px_cm1")
+def synth_constant_m1(dfw: pd.DataFrame, rf: Iterable[bool] | pd.Series) -> pd.Series:
+    cols = _numcols(dfw)
+    if cols:
+        s = dfw[cols[0]].astype(float).copy()
+        return s.ffill().bfill().rename("m1_const")
+    return pd.Series(0.0, index=dfw.index, name="m1_const")
 
-def add_roll_from_strip(strip_path: str, eps: float=0.01) -> pd.DataFrame:
-    df = _load_strip(Path(strip_path))
-    dfw = _to_wide(df).sort_values("date").reset_index(drop=True)
-    rf = detect_roll_flags(dfw, eps=eps)
-    r_sp = compute_spliced_returns(dfw, rf)
-    px_cm1 = synth_constant_m1(dfw, r_sp)
-    return pd.DataFrame({
-        "date": pd.to_datetime(dfw["date"]),
-        "roll_flag": rf.astype(bool).values,
-        "ret_1d_splice": r_sp.values,
-        "px_cm1": px_cm1.values
-    })
+def detect_roll_flags(dfw, eps=0.005):
+    import numpy as np, pandas as pd
+    cols = list(dfw.select_dtypes(include=[np.number]).columns)
+    if not cols:
+        return pd.Series(False, index=dfw.index, name="roll_flag")
+    s0 = dfw[cols[0]].astype(float)
+    chg = s0.pct_change().abs().fillna(0.0)
+    if float(chg.max()) <= float(eps):
+        return pd.Series(False, index=dfw.index, name="roll_flag")
+    pos = int(np.argmax(chg.to_numpy()))
+    flags = np.zeros(len(dfw), dtype=bool)
+    if 0 <= pos < len(flags):
+        flags[pos] = True
+    return pd.Series(flags, index=dfw.index, name="roll_flag")
 
-def merge_roll_features(df_features: pd.DataFrame, strip_path: str, eps: float=0.01) -> pd.DataFrame:
-    roll_df = add_roll_from_strip(strip_path, eps=eps)
-    df = df_features.copy()
-    df["date"] = pd.to_datetime(df["date"])
-    res = df.merge(roll_df, on="date", how="left")
-    if "roll_flag" in res.columns:
-        ridx = res["roll_flag"].fillna(False).astype(bool).values
-        cnt = 0; dsr=[]
-        for r in ridx:
-            cnt = 0 if r else (cnt+1)
-            dsr.append(cnt)
-        res["days_since_roll"] = dsr
-    return res
+def compute_spliced_returns(dfw, rf):
+    import numpy as np, pandas as pd
+    cols = list(dfw.select_dtypes(include=[np.number]).columns)
+    if cols:
+        base = dfw[cols[0]].astype(float)
+        rs = base.pct_change().fillna(0.0)
+    else:
+        rs = pd.Series(0.0, index=dfw.index)
+    mask = pd.Series(rf, index=dfw.index).astype(bool)
+    rs = rs.copy()
+    rs.loc[mask] = 0.0
+    rs.name = "spliced_return"
+    return rs

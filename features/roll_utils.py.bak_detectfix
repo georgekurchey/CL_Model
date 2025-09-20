@@ -1,0 +1,50 @@
+
+from __future__ import annotations
+import pandas as pd
+import numpy as np
+from typing import Iterable
+
+def _pick_numeric_columns(df: pd.DataFrame) -> list[str]:
+    num = df.select_dtypes(include=[np.number])
+    return list(num.columns)
+
+def detect_roll_flags(dfw: pd.DataFrame, eps: float = 0.005) -> pd.Series:
+    cols = _pick_numeric_columns(dfw)
+    if len(cols) >= 2:
+        a, b = cols[:2]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = dfw[b] / dfw[a]
+    elif len(cols) == 1:
+        ratio = dfw[cols[0]] / dfw[cols[0]].shift(1)
+    else:
+        ratio = pd.Series(1.0, index=dfw.index)
+
+    cond = (ratio > 1 + eps) | (ratio.pct_change().abs() > eps)
+    rf = cond.fillna(False).astype(bool)
+    rf = rf & ~rf.shift(1, fill_value=False)
+    rf = rf.shift(1, fill_value=False)
+    rf.name = "roll_flag"
+    return rf
+
+def compute_spliced_returns(dfw: pd.DataFrame, rf: pd.Series) -> pd.Series:
+    cols = _pick_numeric_columns(dfw)
+    if len(cols) == 0:
+        rs = pd.Series(0.0, index=dfw.index)
+    else:
+        base = dfw[cols[0]].astype(float)
+        rs = base.pct_change().fillna(0.0)
+    rf_bool = rf.reindex(rs.index).fillna(False).astype(bool)
+    if hasattr(rs, "iloc"):
+        pos = np.where(rf_bool.to_numpy())[0]
+        if len(pos):
+            rs = rs.copy()
+            rs.iloc[pos] = 0.0
+    rs.name = "spliced_return"
+    return rs
+
+def synth_constant_m1(dfw: pd.DataFrame, rf: Iterable[bool] | pd.Series) -> pd.Series:
+    cols = _pick_numeric_columns(dfw)
+    if len(cols) == 0:
+        return pd.Series(0.0, index=dfw.index, name="m1_const")
+    s = dfw[cols[0]].astype(float).copy()
+    return s.ffill().bfill().rename("m1_const")
