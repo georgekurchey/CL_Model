@@ -1,26 +1,17 @@
 from __future__ import annotations
-from pathlib import Path
-import argparse
+import numpy as np
 import pandas as pd
 
-def save_dummy_report(preds: pd.DataFrame, out_dir: Path) -> Path:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    html = out_dir / "report.html"
-    head = "<h1>CL_Model Report (stub)</h1>"
-    body = preds.tail(10).to_html(index=False)
-    html.write_text(head + body)
-    return html
+def pinball(y, qhat, taus):
+    y = np.asarray(y)
+    L = 0.0
+    for i,tau in enumerate(taus):
+        e = y - qhat[:,i]
+        L += np.mean(np.maximum(tau*e, (tau-1)*e))
+    return L/len(taus)
 
-def main(out: str) -> None:
-    f = Path("preds/baseline_quantiles.parquet")
-    if not f.exists():
-        raise SystemExit("missing preds/baseline_quantiles.parquet")
-    df = pd.read_parquet(f)
-    p = save_dummy_report(df, Path(out))
-    print(str(p))
-
-if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="reports")
-    args = ap.parse_args()
-    main(args.out)
+def pit(y, qhat, taus):
+    y = np.asarray(y)
+    qs = qhat
+    m = (y.reshape(-1,1) <= qs).mean(axis=0)
+    return m

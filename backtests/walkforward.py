@@ -1,35 +1,33 @@
 from __future__ import annotations
-import argparse
 from pathlib import Path
+import numpy as np
 import pandas as pd
-import yaml
-from .scoring import save_dummy_report
 
-PRED = Path("preds"); PRED.mkdir(exist_ok=True)
+TAUS = np.arange(0.05, 0.96, 0.05)
 
-def _load_features() -> pd.DataFrame:
-    f = Path("data/proc/features.parquet")
-    if not f.exists():
-        raise SystemExit("missing data/proc/features.parquet (run features step)")
-    return pd.read_parquet(f)
+def rolling_quantiles(ret, win=252):
+    q = []
+    r = ret.values
+    for i in range(len(r)):
+        if i < win:
+            q.append([0.0]*len(TAUS))
+        else:
+            q.append(np.quantile(r[i-win:i], TAUS).tolist())
+    return np.array(q)
 
-def walkforward(config_path: str) -> None:
-    cfg = yaml.safe_load(Path(config_path).read_text())
-    df = _load_features()
-    preds = df[["date","ret_1d"]].copy()
-    preds["q05"] = preds["ret_1d"].rolling(50, min_periods=20).quantile(0.05).fillna(0)
-    preds["q50"] = preds["ret_1d"].rolling(50, min_periods=20).quantile(0.50).fillna(0)
-    preds["q95"] = preds["ret_1d"].rolling(50, min_periods=20).quantile(0.95).fillna(0)
-    out = PRED / "baseline_quantiles.parquet"
-    preds.to_parquet(out, index=False)
-    save_dummy_report(preds, Path(cfg["reports_dir"]))
-    print(str(out))
+def run_backtest(features_path="data/proc/features.parquet", out_path="preds/baseline_quantiles.parquet"):
+    df = pd.read_parquet(features_path)
+    ret = df["ret_1d"].astype(float).fillna(0.0)
+    Q = rolling_quantiles(ret, win=252)
+    out = pd.DataFrame({"date": df["date"]})
+    for i,t in enumerate(TAUS):
+        out[f"q{int(t*100):02d}"] = Q[:,i]
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    out.to_parquet(out_path, index=False)
+    return out_path
 
-def main(config: str) -> None:
-    walkforward(config)
+def walkforward(config_path: str = "config/pipeline.yaml"):
+    return run_backtest()
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="config/pipeline.yaml")
-    args = ap.parse_args()
-    main(args.config)
+    print(run_backtest())
