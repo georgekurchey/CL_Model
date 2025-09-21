@@ -4,7 +4,7 @@ venv:
 install:
 	. .venv/bin/activate && \
 	pip install -U pip && \
-	pip install ruff pytest pyyaml pandas numpy scikit-learn
+	pip install ruff pytest pyyaml pandas numpy scikit-learn requests python-dateutil
 fmt:
 	. .venv/bin/activate && ruff format .
 lint:

@@ -13,6 +13,14 @@ sources:
     enabled: true
     api_key_env: EIA_API_KEY
     since: '2015-01-01'
+    series:
+      - PET.WCESTUS1.W    # US total crude stocks (weekly)
+      - PET.WCSSTUS1.W    # US crude stocks at Cushing (weekly)
+      - PET.WCRRIUS2.W    # US refinery inputs (weekly)
+  fred:
+    enabled: true
+    series: [DTWEXBGS, DGS10, T10YIE]
+    since: '2015-01-01'
   fred:
     enabled: true
     series: [DTWEXBGS, DGS10, T10YIE]
