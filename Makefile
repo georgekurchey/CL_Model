@@ -20,3 +20,12 @@ report:
 	. .venv/bin/activate && python -m backtests.make_report
 test:
 	. .venv/bin/activate && pytest -q
+
+ingest_cftc:
+	. .venv/bin/activate && python -m etl.cftc
+
+ingest_cvol:
+	. .venv/bin/activate && python -m etl.cvol
+
+pitplots:
+	. .venv/bin/activate && python -m backtests.plots
