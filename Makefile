@@ -10,8 +10,9 @@ backtest:
 	. .venv/bin/activate && python -m backtests.walkforward
 baselines:
 	. .venv/bin/activate && python -m backtests.baselines
+RIDGE?=0.0001
 model_backtest:
-	. .venv/bin/activate && python -m backtests.model_backtest
+	. .venv/bin/activate && python -m backtests.model_backtest -- -r $(RIDGE)
 compare:
 	. .venv/bin/activate && python -m backtests.compare
 coverage:
@@ -29,3 +30,6 @@ ingest_cvol:
 
 pitplots:
 	. .venv/bin/activate && python -m backtests.plots
+
+qwalk_backtest:
+	. .venv/bin/activate && python -m backtests.qwalk_backtest
