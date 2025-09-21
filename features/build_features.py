@@ -9,11 +9,26 @@ from .roll import force_roll_deadline, roll_window_dummy
 
 PROC = Path("data/proc"); PROC.mkdir(parents=True, exist_ok=True)
 
-def _toy_curve() -> pd.DataFrame:
-    dates = pd.date_range("2020-01-01", periods=90, freq="B")
-    data = {f"CL_M{i}": 70 + 0.03*np.arange(len(dates)) + 0.15*i for i in range(1, 13)}
-    df = pd.DataFrame(data, index=dates).reset_index().rename(columns={"index":"date"})
-    return df
+def _load_cme_continuous() -> pd.DataFrame:
+    """
+    Reads data/raw/chris/CL1.csv ... CL12.csv (Nasdaq Data Link CHRIS continuous futures)
+    and maps them to columns CL_M1..CL_M12 by date.
+    """
+    raw = Path("data/raw/chris")
+    frames = []
+    for depth in range(1, 13):
+        f = raw / f"CL{depth}.csv"
+        if not f.exists():
+            continue
+        df = pd.read_csv(f, parse_dates=["date"])
+        df = df.rename(columns={"settle": f"CL_M{depth}"})
+        frames.append(df[["date", f"CL_M{depth}"]])
+    if not frames:
+        raise SystemExit("No CME continuous files found under data/raw/chris (run make ingest)")
+    out = frames[0]
+    for k in frames[1:]:
+        out = out.merge(k, on="date", how="outer")
+    return out.sort_values("date")
 
 def _fred_block() -> pd.DataFrame:
     raw = Path("data/raw/fred")
@@ -31,15 +46,16 @@ def _fred_block() -> pd.DataFrame:
 
 def build_features(config_path: str = "config/pipeline.yaml") -> Path:
     cfg = yaml.safe_load(Path(config_path).read_text())
-    curve = _toy_curve().sort_values("date")
+    curve = _load_cme_continuous()                        # ← real settlements now
     fred = _fred_block()
     df = curve.merge(fred, on="date", how="left")
 
     # Targets (primary)
     df["ret_1d"] = np.log(df["CL_M1"]).diff().fillna(0.0)
 
-    # Curve PCA factors
-    pca = curve_pca_k3(df.filter(like="CL_M").set_index(df["date"]))
+    # Curve PCA (on M1..M12)
+    curve_only = df.filter(like="CL_M").copy()
+    pca = curve_pca_k3(curve_only.set_index(df["date"]))
     pca = pca.reset_index().rename(columns={"index": "date"})
     out = df.merge(pca, on="date", how="left").sort_values("date").reset_index(drop=True)
 
