@@ -72,3 +72,22 @@ daily:
 .PHONY: healthcheck
 healthcheck:
 	. .venv/bin/activate && python -m backtests.healthcheck
+
+.PHONY: ci_seed
+ci_seed:
+	. .venv/bin/activate && python -m etl.ci_seed
+
+.PHONY: ci_pipeline
+ci_pipeline: ci_seed
+	. .venv/bin/activate && python -m features.build_features --config config/pipeline.yaml
+	. .venv/bin/activate && python -m backtests.model_backtest -r 0.0001
+	. .venv/bin/activate && python -m backtests.qwalk_backtest --mix 0.45 --df 4 --paths 2000
+	. .venv/bin/activate && python -m backtests.calibrate
+	. .venv/bin/activate && python -m backtests.compare
+	. .venv/bin/activate && python -m backtests.coverage
+	. .venv/bin/activate && python -m backtests.make_report
+	. .venv/bin/activate && python -m backtests.healthcheck
+
+.PHONY: all_daily
+all_daily:
+	$(MAKE) daily || true
