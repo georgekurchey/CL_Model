@@ -1,49 +1,35 @@
-from __future__ import annotations
 import os
+import sys
 from pathlib import Path
 import pandas as pd
-from etl.utils import safe_write_csv, utc_now_iso
+import nasdaqdatalink as ndl
 
-RAW = Path("data/raw/chris"); RAW.mkdir(parents=True, exist_ok=True)
-
-def _seed(days: int = 120):
-    import numpy as np
-    dates = pd.bdate_range("2020-01-01", periods=days)
-    for depth in range(1, 13):
-        base = 70 + 0.2*depth
-        settle = base + 0.03*np.arange(len(dates))
-        df = pd.DataFrame({"date": dates, "settle": settle})
-        safe_write_csv(df, RAW / f"CL{depth}.csv",
-                       {"source":"seed","dataset":f"CL{depth}","vintage_datetime_utc": utc_now_iso()})
-
-def fetch(code: str, api_key: str, start: str = "2015-01-01") -> pd.DataFrame:
-    import nasdaqdatalink as ndl
+def fetch(code: str, api_key: str, start: str = None):
     ndl.ApiConfig.api_key = api_key
-    df = ndl.get(code, start_date=start)
-    if "Settle" not in df.columns:
-        raise RuntimeError(f"{code}: Settle missing")
-    df = df.reset_index().rename(columns={"Date":"date","Settle":"settle"})
-    return df[["date","settle"]].sort_values("date")
+    try:
+        df = ndl.get(code, start_date=start)
+    except Exception as e:
+        sys.stderr.write(f"NASDAQ/CHRIS fetch skipped ({type(e).__name__}: {e})\n")
+        return None
+    df = df.reset_index().rename(columns={"Date": "date"})
+    return df
 
 def main():
-    seed = os.getenv("SEED_CME","").strip()
-    key = os.getenv("NASDAQ_API_KEY","").strip()
-    if not key and not seed:
-        raise SystemExit("NASDAQ_API_KEY not set")
-    if seed:
-        _seed()
-        for d in range(1,13):
-            p = RAW / f"CL{d}.csv"
-            if p.exists(): print(p)
+    key = os.getenv("NASDAQ_API_KEY", "").strip()
+    if not key:
+        sys.stderr.write("NASDAQ_API_KEY not set; skipping CHRIS fetch.\n")
         return
-    paths = []
-    for d in range(1,13):
-        code = f"CHRIS/NYMEX_CL{d}"
+    outdir = Path("data/raw/chris")
+    outdir.mkdir(parents=True, exist_ok=True)
+    codes = [f"CHRIS/NYMEX_CL{i}" for i in range(1, 13)]
+    for i, code in enumerate(codes, start=1):
         df = fetch(code, key, start="2015-01-01")
-        meta = {"source":"Nasdaq Data Link (CHRIS)","dataset":code,"vintage_datetime_utc":utc_now_iso()}
-        paths.append(safe_write_csv(df, RAW / f"CL{d}.csv", meta))
-    for p in paths:
-        print(p)
+        if df is None:
+            continue
+        keep = df[["date", "Settle"]].rename(columns={"Settle": "settle"})
+        fn = outdir / f"CL{i}.csv"
+        keep.to_csv(fn, index=False)
+        print(fn)
 
 if __name__ == "__main__":
     main()
