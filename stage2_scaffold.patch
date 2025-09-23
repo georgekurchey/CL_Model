@@ -1,0 +1,393 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,56 @@
++name: CI
++on: [push, pull_request]
++jobs:
++  test:
++    runs-on: ubuntu-latest
++    strategy:
++      matrix: { python-version: ['3.11', '3.12', '3.13'] }
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with: { python-version: ${{ matrix.python-version }} }
++      - name: Install deps
++        run: |
++          python -m pip install -U pip
++          pip install ruff pytest
++      - name: Lint
++        run: ruff check .
++      - name: Tests
++        run: pytest -q
+diff --git a/.pre-commit-config.yaml b/.pre-commit-config.yaml
+new file mode 100644
+--- /dev/null
++++ b/.pre-commit-config.yaml
+@@ -0,0 +1,16 @@
++repos:
++  - repo: https://github.com/astral-sh/ruff-pre-commit
++    rev: v0.6.8
++    hooks:
++      - id: ruff
++        args: [--fix]
++      - id: ruff-format
++  - repo: https://github.com/pre-commit/pre-commit-hooks
++    rev: v4.6.0
++    hooks:
++      - id: end-of-file-fixer
++      - id: trailing-whitespace
+diff --git a/Makefile b/Makefile
+new file mode 100644
+--- /dev/null
++++ b/Makefile
+@@ -0,0 +1,46 @@
++.PHONY: venv install fmt lint test ingest features backtest report
++
++venv:
++	python3 -m venv .venv
++
++install:
++	. .venv/bin/activate && \
++	pip install -U pip && \
++	pip install ruff pytest && \
++	pip install pyyaml pandas numpy scikit-learn
++
++fmt:
++	. .venv/bin/activate && ruff format .
++
++lint:
++	. .venv/bin/activate && ruff check .
++
++test:
++	. .venv/bin/activate && pytest -q
++
++ingest:
++	. .venv/bin/activate && python -m etl.eia --since 2015-01-01 && python -m etl.fred --series DTWEXBGS,DGS10,T10YIE --since 2015-01-01
++
++features:
++	. .venv/bin/activate && python -m features.build_features --config config/pipeline.yaml
++
++backtest:
++	. .venv/bin/activate && python -m backtests.walkforward --config config/pipeline.yaml
++
++report:
++	. .venv/bin/activate && python -m backtests.scoring --out reports
+diff --git a/config/pipeline.yaml b/config/pipeline.yaml
+new file mode 100644
+--- /dev/null
++++ b/config/pipeline.yaml
+@@ -0,0 +1,40 @@
++project: CL_Model
++data_root: data
++raw_dir: data/raw
++proc_dir: data/proc
++reports_dir: reports
++random_seed: 42
++horizons: [1]
++roll_rule:
++  type: volume_or_deadline
++  deadline_business_days: 5
++sources:
++  eia:
++    enabled: true
++    api_key_env: EIA_API_KEY
++    since: '2015-01-01'
++  fred:
++    enabled: true
++    series: [DTWEXBGS, DGS10, T10YIE]
++    since: '2015-01-01'
++features:
++  include:
++    - ret_1d
++    - curve_pca_k3
++    - usd_index
++    - real_rate_10y
++targets:
++  - name: ret_1d
++    instrument: CL_M1
++backtest:
++  train_years: 3
++  test_months: 6
+diff --git a/etl/__init__.py b/etl/__init__.py
+new file mode 100644
+--- /dev/null
++++ b/etl/__init__.py
+@@ -0,0 +1 @@
++__all__ = []
+diff --git a/etl/eia.py b/etl/eia.py
+new file mode 100644
+--- /dev/null
++++ b/etl/eia.py
+@@ -0,0 +1,53 @@
++from __future__ import annotations
++import argparse, os
++from pathlib import Path
++import pandas as pd
++
++RAW = Path("data/raw/eia"); RAW.mkdir(parents=True, exist_ok=True)
++
++def _example_weekly() -> pd.DataFrame:
++    # seed example: weekly US crude stocks (dummy numbers)
++    idx = pd.date_range("2020-01-03", periods=10, freq="W-FRI")
++    return pd.DataFrame({"date": idx, "us_crude_stocks": range(10)}).astype({"us_crude_stocks": "float"})
++
++def main(since: str = "2015-01-01") -> None:
++    _example_weekly().to_csv(RAW / "weekly_crude_stocks.csv", index=False)
++    print(str(RAW / "weekly_crude_stocks.csv"))
++
++if __name__ == "__main__":
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--since", default="2015-01-01")
++    args = ap.parse_args()
++    main(since=args.since)
+diff --git a/etl/fred.py b/etl/fred.py
+new file mode 100644
+--- /dev/null
++++ b/etl/fred.py
+@@ -0,0 +1,55 @@
++from __future__ import annotations
++import argparse
++from pathlib import Path
++import pandas as pd
++
++RAW = Path("data/raw/fred"); RAW.mkdir(parents=True, exist_ok=True)
++
++def _seed(series: list[str]) -> None:
++    dates = pd.date_range("2020-01-01", periods=30, freq="B")
++    for s in series:
++        df = pd.DataFrame({"date": dates, s: 100.0}).astype({s: "float"})
++        df.to_csv(RAW / f"{s}.csv", index=False)
++
++def main(series: list[str], since: str = "2015-01-01") -> None:
++    _seed(series)
++    for s in series:
++        print(str(RAW / f"{s}.csv"))
++
++if __name__ == "__main__":
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--series", type=lambda x: x.split(","), default=["DTWEXBGS","DGS10","T10YIE"])
++    ap.add_argument("--since", default="2015-01-01")
++    args = ap.parse_args()
++    main(args.series, args.since)
+diff --git a/features/__init__.py b/features/__init__.py
+new file mode 100644
+--- /dev/null
++++ b/features/__init__.py
+@@ -0,0 +1 @@
++__all__ = []
+diff --git a/features/build_features.py b/features/build_features.py
+new file mode 100644
+--- /dev/null
++++ b/features/build_features.py
+@@ -0,0 +1,103 @@
++from __future__ import annotations
++import argparse, json
++from pathlib import Path
++import pandas as pd
++import numpy as np
++import yaml
++from .curve_pca import curve_pca_k3
++
++PROC = Path("data/proc"); PROC.mkdir(parents=True, exist_ok=True)
++
++def _toy_curve() -> pd.DataFrame:
++    # simple M1..M12 toy settlements, gently trending up
++    dates = pd.date_range("2020-01-01", periods=30, freq="B")
++    data = {f"CL_M{i}": 70 + 0.05*np.arange(len(dates)) + 0.2*i for i in range(1, 13)}
++    df = pd.DataFrame(data, index=dates).reset_index().rename(columns={"index": "date"})
++    return df
++
++def _fred_block() -> pd.DataFrame:
++    # read seeded FRED files if present
++    raw = Path("data/raw/fred")
++    out = []
++    for s in ["DTWEXBGS","DGS10","T10YIE"]:
++        f = raw / f"{s}.csv"
++        if f.exists():
++            out.append(pd.read_csv(f, parse_dates=["date"]))
++    if not out:
++        return pd.DataFrame()
++    df = out[0]
++    for k in out[1:]:
++        df = df.merge(k, on="date", how="outer")
++    return df.sort_values("date")
++
++def build_features(config_path: str = "config/pipeline.yaml") -> Path:
++    cfg = yaml.safe_load(Path(config_path).read_text())
++    curve = _toy_curve()
++    fred = _fred_block()
++    df = curve.merge(fred, on="date", how="left")
++    df["ret_1d"] = np.log(df["CL_M1"]).diff().fillna(0.0)
++    pca = curve_pca_k3(df.filter(like="CL_M").set_index(df["date"]))
++    pca = pca.reset_index().rename(columns={"index": "date"})
++    out = df.merge(pca, on="date", how="left")
++    out = out.sort_values("date").reset_index(drop=True)
++    out_file = PROC / "features.parquet"
++    out.to_parquet(out_file, index=False)
++    return out_file
++
++def main(config: str) -> None:
++    out = build_features(config)
++    print(str(out))
++
++if __name__ == "__main__":
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--config", default="config/pipeline.yaml")
++    args = ap.parse_args()
++    main(args.config)
+diff --git a/features/curve_pca.py b/features/curve_pca.py
+new file mode 100644
+--- /dev/null
++++ b/features/curve_pca.py
+@@ -0,0 +1,36 @@
++from __future__ import annotations
++import pandas as pd
++import numpy as np
++from sklearn.decomposition import PCA
++
++def curve_pca_k3(curve_df: pd.DataFrame) -> pd.DataFrame:
++    """
++    curve_df: index=date, columns like CL_M1..CL_M12 (settlements)
++    returns DataFrame with columns: level, slope, curvature
++    """
++    X = curve_df.copy()
++    X = X.sort_index()
++    X = (X - X.mean(axis=1).values.reshape(-1,1)) / (X.std(axis=1).replace(0,1).values.reshape(-1,1))
++    X = X.fillna(0.0)
++    pca = PCA(n_components=3, random_state=42)
++    F = pca.fit_transform(X.values)
++    out = pd.DataFrame(F, index=curve_df.index, columns=["curve_level","curve_slope","curve_curv"])
++    return out
+diff --git a/backtests/__init__.py b/backtests/__init__.py
+new file mode 100644
+--- /dev/null
++++ b/backtests/__init__.py
+@@ -0,0 +1 @@
++__all__ = []
+diff --git a/backtests/walkforward.py b/backtests/walkforward.py
+new file mode 100644
+--- /dev/null
++++ b/backtests/walkforward.py
+@@ -0,0 +1,66 @@
++from __future__ import annotations
++import argparse
++from pathlib import Path
++import pandas as pd
++import yaml
++from .scoring import save_dummy_report
++
++PROC = Path("data/proc"); PROC.mkdir(parents=True, exist_ok=True)
++PRED = Path("preds"); PRED.mkdir(exist_ok=True)
++
++def _load_features() -> pd.DataFrame:
++    f = Path("data/proc/features.parquet")
++    if not f.exists():
++        raise SystemExit("missing data/proc/features.parquet (run features step)")
++    return pd.read_parquet(f)
++
++def walkforward(config_path: str) -> None:
++    cfg = yaml.safe_load(Path(config_path).read_text())
++    df = _load_features()
++    # placeholder: naive predictive distribution via empirical residuals
++    preds = df[["date","ret_1d"]].copy()
++    preds["q05"] = preds["ret_1d"].rolling(50, min_periods=20).quantile(0.05).fillna(0)
++    preds["q50"] = preds["ret_1d"].rolling(50, min_periods=20).quantile(0.50).fillna(0)
++    preds["q95"] = preds["ret_1d"].rolling(50, min_periods=20).quantile(0.95).fillna(0)
++    out = PRED / "baseline_quantiles.parquet"
++    preds.to_parquet(out, index=False)
++    save_dummy_report(preds, Path(cfg["reports_dir"]))
++    print(str(out))
++
++def main(config: str) -> None:
++    walkforward(config)
++
++if __name__ == "__main__":
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--config", default="config/pipeline.yaml")
++    args = ap.parse_args()
++    main(args.config)
+diff --git a/backtests/scoring.py b/backtests/scoring.py
+new file mode 100644
+--- /dev/null
++++ b/backtests/scoring.py
+@@ -0,0 +1,43 @@
++from __future__ import annotations
++from pathlib import Path
++import argparse
++import pandas as pd
++
++def save_dummy_report(preds: pd.DataFrame, out_dir: Path) -> Path:
++    out_dir.mkdir(parents=True, exist_ok=True)
++    html = out_dir / "report.html"
++    head = "<h1>CL_Model Report (stub)</h1>"
++    body = preds.tail(10).to_html(index=False)
++    html.write_text(head + body)
++    return html
++
++def main(out: str) -> None:
++    f = Path("preds/baseline_quantiles.parquet")
++    if not f.exists():
++        raise SystemExit("missing preds/baseline_quantiles.parquet")
++    df = pd.read_parquet(f)
++    p = save_dummy_report(df, Path(out))
++    print(str(p))
++
++if __name__ == "__main__":
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--out", default="reports")
++    args = ap.parse_args()
++    main(args.out)
+diff --git a/tests/test_pipeline_smoke.py b/tests/test_pipeline_smoke.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_pipeline_smoke.py
+@@ -0,0 +1,21 @@
++from pathlib import Path
++import pandas as pd
++from features.build_features import build_features
++from backtests.walkforward import walkforward
++
++def test_build_features(tmp_path, monkeypatch):
++    cfg = tmp_path/"config.yaml"
++    cfg.write_text("proc_dir: data/proc\nreports_dir: reports\n")
++    out = build_features()
++    assert Path(out).exists()
++    df = pd.read_parquet(out)
++    assert {"ret_1d","curve_level","curve_slope","curve_curv"}.issubset(df.columns)
++
++def test_walkforward(tmp_path):
++    # ensure features exist first
++    out = build_features()
++    assert Path(out).exists()
++    # run walkforward stub
++    from backtests.walkforward import walkforward
++    walkforward("config/pipeline.yaml")
++    assert Path("preds/baseline_quantiles.parquet").exists()
+diff --git a/docs/README_STAGE2.md b/docs/README_STAGE2.md
+new file mode 100644
+--- /dev/null
++++ b/docs/README_STAGE2.md
+@@ -0,0 +1,38 @@
++# Stage 2 Scaffold
++
++## Quickstart
++```bash
++make venv && make install
++make ingest
++make features
++make backtest
++make report
++```
++
++Artifacts:
++- `data/raw/*` seeded CSVs (stub connectors)
++- `data/proc/features.parquet`
++- `preds/baseline_quantiles.parquet`
++- `reports/report.html`
++
++## Next
++- Replace ETL stubs with real API pulls (EIA, FRED, CME settlements).
++- Flesh out models (ARX+GARCH, Quantile Regression) and scoring (CRPS, VaR coverage).

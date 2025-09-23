@@ -50,3 +50,5 @@ _backup_*/
 .env.*
 .venv/
 venv/
+reports/*.txt
+reports/*.txt
