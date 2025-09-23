@@ -72,6 +72,24 @@ def build_features(config_path: str = "config/pipeline.yaml") -> Path:
     eia_daily = build_eia_surprises(out["date"])
     out = out.merge(eia_daily, on="date", how="left")
 
+    try:
+        cvol = pd.read_parquet("data/raw/cvol/wti_cvol.parquet")
+        out = out.merge(cvol, on="date", how="left")
+        out["cvol_1m_z"] = _zscore(out["cvol_1m"])
+        out["skew_25d_z"] = _zscore(out["skew_25d"])
+        out["term_premium_z"] = _zscore(out["term_premium"])
+        out["iv_rv_gap"] = out["cvol_1m"] - out["ret_1d"].rolling(20, min_periods=10).std(ddof=0)*252**0.5
+    except Exception:
+        pass
+    try:
+        cot = pd.read_parquet("data/raw/cftc/managed_money.parquet")
+        out = out.merge(cot, on="date", how="left")
+        if "open_interest" in out and "mm_net" in out:
+            out["mm_net_norm"] = out["mm_net"] / out["open_interest"].replace(0, pd.NA)
+        out["mm_net_chg_4w"] = out.get("mm_net", pd.Series(index=out.index)).diff(4)
+    except Exception:
+        pass
+
     if {"DTWEXBGS","DGS10","T10YIE"}.issubset(out.columns):
         out["usd_z"] = _zscore(out["DTWEXBGS"])
         out["real_rate_10y"] = out["DGS10"] - out["T10YIE"]
