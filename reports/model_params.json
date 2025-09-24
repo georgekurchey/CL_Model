@@ -9,6 +9,9 @@
     0.0,
     0.0,
     0.0,
+    0.0,
+    0.0,
+    0.0,
     0.0
   ],
   "beta_lv": [
@@ -19,9 +22,15 @@
     0.0,
     0.0,
     0.0,
+    0.0,
+    0.0,
+    0.0,
     0.0
   ],
   "feature_names": [
+    "usd_z",
+    "real_rate_10y",
+    "term_slope",
     "eia_us_crude_surprise",
     "eia_cushing_surprise",
     "eia_runs_surprise",
