@@ -1,1 +1,52 @@
+name: Daily Forecast
 
+on:
+  schedule:
+    - cron: "15 2 * * *"   # 02:15 UTC nightly
+  workflow_dispatch:
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    env:
+      EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      NASDAQ_API_KEY: ${{ secrets.NASDAQ_API_KEY }}
+      PROXY_OVX: ${{ secrets.PROXY_OVX }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt || true
+          pip install -r requirements.lock.txt || true
+          pip install -e .
+          pip install pytest matplotlib nasdaq-data-link requests
+      - name: Ingest data
+        run: |
+          python -m etl.eia --since 2015-01-01
+          python -m etl.fred --series DTWEXBGS,DGS10,T10YIE --since 2015-01-01
+          python -m etl.cftc || true
+          ( [ -f data/raw/cvol/wti_cvol.csv ] && python -m etl.cvol --csv data/raw/cvol/wti_cvol.csv ) || python -m etl.cvol --proxy-ovx
+          python -m etl.nasdaq_chris_settlements || true
+      - name: Build features & run models
+        run: |
+          python -m features.build_features --config config/pipeline.yaml
+          python -m backtests.model_backtest -r 0.0001
+          python -m backtests.qwalk_backtest --mix 0.45 --df 4 --paths 4000
+          python -m backtests.calibrate
+          python -m backtests.compare
+          python -m backtests.coverage
+          python -m backtests.plots
+          python -m backtests.make_report
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-reports
+          path: |
+            reports/**
+            preds/**
+            data/proc/features.parquet
+          if-no-files-found: warn
