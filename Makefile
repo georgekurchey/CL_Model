@@ -24,10 +24,10 @@ baselines:
 	. .venv/bin/activate && python -m backtests.baselines
 
 model_backtest:
-	. .venv/bin/activate && python -m backtests.model_backtest -r $(RIDGE)
+	. .venv/bin/activate && python -m backtests.model_backtest -r 0.0001
 
 qwalk_backtest:
-	. .venv/bin/activate && python -m backtests.qwalk_backtest --mix $(QWALK_MIX) --df $(QWALK_DF) --paths $(QWALK_PATHS)
+	. .venv/bin/activate && python -m backtests.qwalk_backtest --mix 0.45 --df 4 --paths 8000
 
 qwalk_calibrate:
 	. .venv/bin/activate && python -m backtests.calibrate
@@ -48,8 +48,8 @@ test:
 	. .venv/bin/activate && pytest -q
 
 stage6_all:
-	. .venv/bin/activate && python -m backtests.model_backtest -r $(RIDGE)
-	. .venv/bin/activate && python -m backtests.qwalk_backtest --mix $(QWALK_MIX) --df $(QWALK_DF) --paths $(QWALK_PATHS)
+	. .venv/bin/activate && python -m backtests.model_backtest -r 0.0001
+	. .venv/bin/activate && python -m backtests.qwalk_backtest --mix 0.45 --df 4 --paths 8000
 	. .venv/bin/activate && python -m backtests.calibrate
 	. .venv/bin/activate && python -m backtests.compare
 	. .venv/bin/activate && python -m backtests.coverage
@@ -81,7 +81,7 @@ ci_seed:
 ci_pipeline: ci_seed
 	. .venv/bin/activate && python -m features.build_features --config config/pipeline.yaml
 	. .venv/bin/activate && python -m backtests.model_backtest -r 0.0001
-	. .venv/bin/activate && python -m backtests.qwalk_backtest --mix 0.45 --df 4 --paths 2000
+	. .venv/bin/activate && python -m backtests.qwalk_backtest --mix 0.45 --df 4 --paths 8000
 	. .venv/bin/activate && python -m backtests.calibrate
 	. .venv/bin/activate && python -m backtests.compare
 	. .venv/bin/activate && python -m backtests.coverage
@@ -91,3 +91,6 @@ ci_pipeline: ci_seed
 .PHONY: all_daily
 all_daily:
 	$(MAKE) daily || true
+
+sweep:
+	. .venv/bin/activate && python -m backtests.sweep
