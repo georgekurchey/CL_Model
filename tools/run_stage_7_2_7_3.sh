@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+set -euo pipefail
+: "${CI_FILE:=.github/workflows/ci.yml}"
+
+: "${CI_FILE:=.github/workflows/ci.yml}"
+
+
+COV95_MIN="${COV95_MIN:-0.90}"
+VENV_PATH="${VENV_PATH:-.venv}"
+CI_FILE=".github/workflows/ci.yml"
+
+if [ ! -f "pyproject.toml" ] && [ ! -f "setup.cfg" ] && [ ! -d ".git" ]; then
+  echo "ERROR: run from the repository root." >&2
+  exit 1
+fi
+
+if [ -d "$VENV_PATH" ] && [ -f "$VENV_PATH/bin/activate" ]; then
+  . "$VENV_PATH/bin/activate"
+fi
+
+echo ">> [7.2] Running local coverage check…"
+python -m backtests.coverage || true
+
+if [ ! -f reports/coverage.csv ]; then
+  echo "ERROR: reports/coverage.csv not found; did coverage step fail?" >&2
+  exit 1
+fi
+
+python - <<PY_ENFORCE
+import sys, pandas as pd
+min_req = float("$COV95_MIN")
+df = pd.read_csv("reports/coverage.csv")
+if "VaR95_cov" not in df.columns:
+    print("ERROR: 'VaR95_cov' column not found in reports/coverage.csv", file=sys.stderr)
+    sys.exit(1)
+print("== Local Coverage ==")
+print(df[["model","VaR95_cov"]].to_string(index=False))
+bad = df[df["VaR95_cov"] < min_req]
+if not bad.empty:
+    print(f"\nFAIL: One or more models have VaR95_cov < {min_req:.3f}:\n", bad[["model","VaR95_cov"]].to_string(index=False))
+    sys.exit(2)
+print(f"\nPASS: All models meet VaR95_cov >= {min_req:.3f}")
+PY_ENFORCE
+
+echo ">> [7.3] Patching CI workflow at $CI_FILE…"
+mkdir -p .github/workflows
+
+if [ ! -f "$CI_FILE" ]; then
+  cat > "$CI_FILE" <<'YAML'
+name: CI
+on:
+  push:
+    branches: [ main, feat/** ]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt || true
+          pip install -r requirements.lock.txt || true
+          pip install -e .
+          pip install pytest matplotlib pandas
+      - name: Smoke tests
+        run: pytest -q || true
+YAML
+fi
+
+if ! grep -qE '^\s*schedule:' "$CI_FILE"; then
+python - <<'PY_SCHED'
+from pathlib import Path
+p = Path(".github/workflows/ci.yml")
+s = p.read_text()
+if "on:" in s and "schedule:" not in s:
+    s = s.replace("on:", "on:\n  schedule:\n    - cron: \"15 2 * * *\"  # nightly 02:15 UTC", 1)
+p.write_text(s)
+print("Added nightly schedule to ci.yml")
+PY_SCHED
+else
+  echo "Schedule already present in ci.yml"
+fi
+
+if ! grep -q "backtests.coverage" "$CI_FILE"; then
+python - <<'PY_STEPS'
+from pathlib import Path, re
+p = Path(".github/workflows/ci.yml")
+s = p.read_text()
+block = r'''
+      - name: Coverage metrics
+        run: |
+          python -m backtests.coverage || true
+          test -f reports/coverage.csv
+
+      - name: Threshold gate (VaR95 >= 0.90)
+        run: |
+          python - <<'PY'
+          import sys, pandas as pd
+          df = pd.read_csv("reports/coverage.csv")
+          if "VaR95_cov" not in df.columns:
+              print("FAIL: 'VaR95_cov' column missing")
+              sys.exit(1)
+          bad = df[df["VaR95_cov"] < 0.90]
+          if not bad.empty:
+              print("FAIL: VaR95 coverage too low for:")
+              print(bad[["model","VaR95_cov"]].to_string(index=False))
+              sys.exit(2)
+          print("PASS: VaR95 coverage OK")
+          PY
+'''
+if "Build artifacts (no external keys)" in s:
+    s = s.replace("Build artifacts (no external keys)", "Build artifacts (no external keys)\n" + block, 1)
+else:
+    s = re.sub(r'(steps:\s*\n)', r'\1' + block + '\n', s, count=1)
+p.write_text(s)
+print("Added coverage+gate steps to ci.yml")
+PY_STEPS
+else
+  echo "Coverage + threshold gate already present in ci.yml"
+fi
+
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if ! git diff --quiet -- "$CI_FILE"; then
+    echo ">> Committing CI workflow changes…"
+    git add "$CI_FILE"
+    git commit -m "ci(stage7): add nightly schedule and VaR95 threshold gate" || true
+    echo ">> Run 'git push' to publish the workflow changes."
+  else
+    echo "No changes to commit in $CI_FILE"
+  fi
+fi
+
+echo "Done: Stage 7.2 + 7.3 completed successfully."

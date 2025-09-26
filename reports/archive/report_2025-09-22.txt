@@ -1,7 +1,0 @@
-== Pinball loss (avg) ==
-arx_garch            0.000000
-baseline_quantiles   0.000000
-model_qwalk          0.000068
-model_qwalk_cal      0.000070
-model_svjump         0.000074
-quantile_reg         0.000000

@@ -52,3 +52,7 @@ _backup_*/
 venv/
 reports/*.txt
 reports/*.txt
+
+# reports artifacts
+reports/*.png
+reports/archive/
