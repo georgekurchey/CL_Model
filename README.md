@@ -1,5 +1,7 @@
 # CL_Model (ready‑to‑run)
 
+- [Getting Started](docs/guide.md)
+
 Unzip this ZIP **directly into your Documents folder** so you get:
     Documents/CL_Model/
 
