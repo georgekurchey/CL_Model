@@ -42,31 +42,3 @@ def synth_constant_m1(dfw: pd.DataFrame, rf: Iterable[bool] | pd.Series) -> pd.S
         return s.ffill().bfill().rename("m1_const")
     return pd.Series(0.0, index=dfw.index, name="m1_const")
 
-def detect_roll_flags(dfw, eps=0.005):
-    import numpy as np, pandas as pd
-    cols = list(dfw.select_dtypes(include=[np.number]).columns)
-    if not cols:
-        return pd.Series(False, index=dfw.index, name="roll_flag")
-    s0 = dfw[cols[0]].astype(float)
-    chg = s0.pct_change().abs().fillna(0.0)
-    if float(chg.max()) <= float(eps):
-        return pd.Series(False, index=dfw.index, name="roll_flag")
-    pos = int(np.argmax(chg.to_numpy()))
-    flags = np.zeros(len(dfw), dtype=bool)
-    if 0 <= pos < len(flags):
-        flags[pos] = True
-    return pd.Series(flags, index=dfw.index, name="roll_flag")
-
-def compute_spliced_returns(dfw, rf):
-    import numpy as np, pandas as pd
-    cols = list(dfw.select_dtypes(include=[np.number]).columns)
-    if cols:
-        base = dfw[cols[0]].astype(float)
-        rs = base.pct_change().fillna(0.0)
-    else:
-        rs = pd.Series(0.0, index=dfw.index)
-    mask = pd.Series(rf, index=dfw.index).astype(bool)
-    rs = rs.copy()
-    rs.loc[mask] = 0.0
-    rs.name = "spliced_return"
-    return rs
